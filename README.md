@@ -31,7 +31,7 @@ cd eko
 ./eko
 ```
 
-**That's it!** EKO will automatically detect your local Ollama instance and available models.
+**That's it!** EKO will automatically detect your local AI instance and available models.
 
 ## 💬 Usage
 
@@ -41,7 +41,7 @@ cd eko
 - **`j/k`** - Scroll through conversation
 - **`gg`** - Jump to top
 - **`G`** - Jump to bottom
-- **`y`** - Copy message to clipboard
+- **`y`** - Copy message to clipboard, y+<id> then enter
 - **`q`** - Quit
 
 ### Model Switching
@@ -161,7 +161,6 @@ ollama pull qwen
 ## 📋 Requirements
 
 - **Go 1.19+** (for building)
-- **Ollama** (for AI models)
 - **Terminal** (any modern terminal emulator)
 
 ## 🤝 Community

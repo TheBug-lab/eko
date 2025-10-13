@@ -19,6 +19,7 @@ const (
 	InsertState
 	CommandState
 	YankState
+	YankCodeState  // New state for yanking code blocks
 	ConfigState
 	SaveState
 )
@@ -38,6 +39,7 @@ type ConfigLoadedMsg struct {
 	Err       error
 }
 
+// Legacy streaming messages (kept for compatibility)
 type StreamMsg struct {
 	ID    string
 	Token string
@@ -49,10 +51,31 @@ type StreamErrorMsg struct {
 	Error string
 }
 
+// Real-time streaming messages
 type StreamTokenMsg struct {
 	ID    string
 	Token string
 	Done  bool
+}
+
+// New streaming message types for real-time updates
+type TokenMsg struct {
+	ID    string
+	Token string
+}
+
+type GenerationDoneMsg struct {
+	ID string
+}
+
+type GenerationStartMsg struct {
+	ID string
+}
+
+type RedrawMsg struct{}
+
+type CancelStreamMsg struct {
+	ID string
 }
 
 type ViewportContentMsg struct {
@@ -65,3 +88,18 @@ type ModelsLoadedMsg struct {
 }
 
 type ScrollToBottomMsg struct{}
+
+// CodeBlock represents a code block with unique ID and metadata
+type CodeBlock struct {
+	ID       string `json:"id"`
+	Language string `json:"language"`
+	Content  string `json:"content"`
+	MessageID string `json:"message_id"`
+}
+
+// YankModeMsg represents yank mode operations
+type YankModeMsg struct {
+	Action string // "enter", "exit", "copy"
+	CodeID string // code block ID to copy
+	Success bool  // whether the operation was successful
+}

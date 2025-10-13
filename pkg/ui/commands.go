@@ -27,7 +27,7 @@ func (m Model) updateViewportContent() tea.Cmd {
 	viewMode := m.viewMode
 	streaming := m.streaming
 	spinner := m.spinner
-	
+
 	return func() tea.Msg {
 		// Add safety check to prevent panics, but use defaults if needed
 		if width == 0 {
@@ -36,7 +36,7 @@ func (m Model) updateViewportContent() tea.Cmd {
 		if height == 0 {
 			height = 20
 		}
-		
+
 		// Create a temporary model with captured state for rendering
 		tempModel := m
 		tempModel.messages = messages
@@ -45,7 +45,7 @@ func (m Model) updateViewportContent() tea.Cmd {
 		tempModel.viewMode = viewMode
 		tempModel.streaming = streaming
 		tempModel.spinner = spinner
-		
+
 		content := tempModel.renderMessages()
 		return types.ViewportContentMsg{Content: content}
 	}
@@ -105,6 +105,41 @@ func (m Model) streamResponseRealtime(id string) tea.Cmd {
 		}
 
 		return types.StreamTokenMsg{ID: id, Token: fullResponse.String(), Done: true}
+	}
+}
+
+// startRealtimeStream starts a real-time streaming response
+func (m Model) startRealtimeStream(id string) tea.Cmd {
+	return func() tea.Msg {
+		// Prepare messages for Ollama (exclude the empty assistant message we just added)
+		messages := make([]types.Message, 0, len(m.messages)-1)
+		for _, msg := range m.messages {
+			if msg.ID != id { // Skip the empty assistant message
+				messages = append(messages, msg)
+			}
+		}
+
+		// Start the real-time streaming in a goroutine
+		go func() {
+			// Send generation start message
+			m.msgChan <- types.GenerationStartMsg{ID: id}
+
+			// Use the new real-time streaming method
+			cmd := m.ollamaClient.StreamChatRealtime(m.modelName, messages, m.msgChan, id)
+			cmd()
+		}()
+
+		return nil
+	}
+}
+
+
+// cancelStream cancels the current streaming operation
+func (m Model) cancelStream(id string) tea.Cmd {
+	return func() tea.Msg {
+		// Send cancellation message to the channel
+		m.msgChan <- types.CancelStreamMsg{ID: id}
+		return nil
 	}
 }
 

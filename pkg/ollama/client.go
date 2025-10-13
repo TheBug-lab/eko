@@ -128,3 +128,56 @@ func (c *Client) StreamChat(model string, messages []types.Message, onToken func
 
 	return nil
 }
+
+// StreamChatRealtime streams a chat response from Ollama with real-time updates via channel
+func (c *Client) StreamChatRealtime(model string, messages []types.Message, msgChan chan<- tea.Msg, messageID string) tea.Cmd {
+	return func() tea.Msg {
+		req := Request{
+			Model:    model,
+			Messages: messages,
+			Stream:   true,
+		}
+
+		jsonData, err := json.Marshal(req)
+		if err != nil {
+			msgChan <- types.StreamErrorMsg{ID: messageID, Error: fmt.Sprintf("failed to marshal request: %v", err)}
+			return nil
+		}
+
+		resp, err := c.Client.Post(c.BaseURL+"/api/chat", "application/json", bytes.NewBuffer(jsonData))
+		if err != nil {
+			msgChan <- types.StreamErrorMsg{ID: messageID, Error: fmt.Sprintf("failed to make request: %v", err)}
+			return nil
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			msgChan <- types.StreamErrorMsg{ID: messageID, Error: fmt.Sprintf("ollama API returned status %d", resp.StatusCode)}
+			return nil
+		}
+
+		decoder := json.NewDecoder(resp.Body)
+		for {
+			var response Response
+			if err := decoder.Decode(&response); err != nil {
+				if err == io.EOF {
+					break
+				}
+				msgChan <- types.StreamErrorMsg{ID: messageID, Error: fmt.Sprintf("failed to decode response: %v", err)}
+				return nil
+			}
+
+			// Send token immediately via channel
+			if response.Message.Content != "" {
+				msgChan <- types.TokenMsg{ID: messageID, Token: response.Message.Content}
+			}
+
+			if response.Done {
+				msgChan <- types.GenerationDoneMsg{ID: messageID}
+				break
+			}
+		}
+
+		return nil
+	}
+}
