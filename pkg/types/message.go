@@ -1,6 +1,10 @@
 package types
 
-import "time"
+import (
+	"time"
+
+	"github.com/thebug/lab/eko/v3/pkg/comfyui"
+)
 
 // Message represents a chat message
 type Message struct {
@@ -33,10 +37,17 @@ const (
 )
 
 // Message types for tea.Cmd
+type QueueStatusMsg struct {
+	Count int
+	Err   error
+}
+
 type ConfigLoadedMsg struct {
-	ModelName string
-	URL       string
-	Err       error
+	ModelName    string
+	URL          string
+	ComfyUIURL   string
+	WorkflowPath string
+	Err          error
 }
 
 // Legacy streaming messages (kept for compatibility)
@@ -88,6 +99,11 @@ type ModelsLoadedMsg struct {
 }
 
 type ScrollToBottomMsg struct{}
+
+type ProgressMsg struct {
+	ID     string
+	Update comfyui.ProgressUpdate
+}
 
 // CodeBlock represents a code block with unique ID and metadata
 type CodeBlock struct {

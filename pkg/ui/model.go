@@ -2,6 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/atotto/clipboard"
@@ -10,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/thebug/lab/eko/v3/pkg/comfyui"
 	"github.com/thebug/lab/eko/v3/pkg/config"
 	"github.com/thebug/lab/eko/v3/pkg/ollama"
 	"github.com/thebug/lab/eko/v3/pkg/types"
@@ -30,9 +34,17 @@ type Model struct {
 	viewport        viewport.Model
 	input           textinput.Model
 	spinner         spinner.Model
+	progressPct     float64
+	progressStage   string
+	nodeProgress    string // "5/9" format for current node progress
+	elapsedTime     time.Duration
+	startTime       time.Time
 	modelName       string
 	configManager   *config.Manager
 	ollamaClient    *ollama.Client
+	comfyUIClient   *comfyui.Client
+	comfyUIWorkflow []byte
+	isImageMode     bool
 	width           int
 	height          int
 	modelList       []string
@@ -41,6 +53,7 @@ type Model struct {
 	streaming       bool
 	isThinking      bool
 	currentStreamID string
+	queueCount      int
 
 	// For gg / G navigation
 	lastKey  string
@@ -56,7 +69,7 @@ type Model struct {
 }
 
 // NewModel creates a new application model
-func NewModel() Model {
+func NewModel(imageMode bool, args []string) Model {
 	ti := textinput.New()
 	ti.Prompt = ""
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("0"))
@@ -78,18 +91,46 @@ func NewModel() Model {
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(accentColor)
 
+	var workflow []byte
+	isImageMode := imageMode
+	
+	// If image mode is enabled, we'll try to load the workflow later when config is loaded
+	// unless a specific file was passed in args
+	var initialWorkflowPath string
+	if isImageMode {
+		ti.Placeholder = "Enter prompt for image generation..."
+		if len(args) > 0 {
+			initialWorkflowPath = args[0]
+			var err error
+			workflow, err = os.ReadFile(initialWorkflowPath)
+			if err != nil {
+				fmt.Printf("Error reading workflow file: %v\n", err)
+				// We'll try to load default later
+			}
+		}
+	}
+
 	return Model{
 		state:           types.NormalState,
 		viewMode:        types.VerboseMode,
 		viewport:        vp,
 		input:           ti,
 		spinner:         s,
+		progressPct:     0.0,
+		progressStage:   "",
+		nodeProgress:    "",
+		elapsedTime:     0,
+		startTime:       time.Time{},
 		modelName:       config.DefaultModel,
 		configManager:   config.NewManager(),
 		ollamaClient:    ollama.NewClient(),
+		comfyUIClient:   comfyui.NewClient(config.DefaultComfyUIURL),
+		comfyUIWorkflow: workflow,
+		isImageMode:     isImageMode,
 		streaming:       false,
 		isThinking:      false,
 		currentStreamID: "",
+		queueCount:      0,
 		lastKey:         "",
 		msgChan:         make(chan tea.Msg, 100), // Buffered channel for streaming messages
 		yankInput:       "",
@@ -100,12 +141,18 @@ func NewModel() Model {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		tea.EnterAltScreen,
 		m.configManager.LoadConfig(),
 		m.initializeViewport(),
 		m.updateViewportContent(),
-	)
+	}
+	
+	if m.isImageMode {
+		cmds = append(cmds, checkQueueStatus(m.comfyUIClient.BaseURL))
+	}
+	
+	return tea.Batch(cmds...)
 }
 
 // Update handles model updates
@@ -149,6 +196,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == "assistant" {
 					m.messages[len(m.messages)-1].Content += " [Stream cancelled]"
 				}
+				cmds = append(cmds, m.updateViewportContent())
+			}
+		case types.ProgressMsg:
+			// Handle progress updates from ComfyUI
+			if m.isImageMode && m.isThinking && m.currentStreamID == streamMsg.ID {
+				m.queueCount = streamMsg.Update.QueueRemaining
+				if streamMsg.Update.Percent > 0 {
+					m.progressPct = streamMsg.Update.Percent
+				}
+				if streamMsg.Update.Value > 0 && streamMsg.Update.Max > 0 {
+					m.nodeProgress = fmt.Sprintf("%d/%d", streamMsg.Update.Value, streamMsg.Update.Max)
+				}
+				// Don't set progressStage - we don't want to show "Executing node X" text
+				m.elapsedTime = streamMsg.Update.ElapsedTime
 				cmds = append(cmds, m.updateViewportContent())
 			}
 		}
@@ -282,13 +343,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						aiMsg := types.Message{ID: aiId, Role: "assistant", Content: "", IsCollapsed: false, Timestamp: time.Now()}
 						m.messages = append(m.messages, aiMsg)
 
-						// Start real-time streaming response
-						m.streaming = true
-						m.isThinking = true
-						m.currentStreamID = aiId
-						cmds = append(cmds, m.startRealtimeStream(aiId), m.updateViewportContent(), m.scrollToBottom())
-						m.state = types.NormalState
-						m.input.Reset()
+						if m.isImageMode {
+							m.isThinking = true
+							m.currentStreamID = aiId
+							m.progressPct = 0.0
+							m.progressStage = "Starting..."
+							m.nodeProgress = ""
+							m.elapsedTime = 0
+							m.startTime = time.Now()
+							cmds = append(cmds, m.generateImage(aiId, m.input.Value()), m.updateViewportContent(), m.scrollToBottom(), m.spinner.Tick)
+							m.state = types.NormalState
+							m.input.Reset()
+						} else {
+							// Start real-time streaming response
+							m.streaming = true
+							m.isThinking = true
+							m.currentStreamID = aiId
+							cmds = append(cmds, m.startRealtimeStream(aiId), m.updateViewportContent(), m.scrollToBottom())
+							m.state = types.NormalState
+							m.input.Reset()
+						}
 					}
 				} else if msg.String() == "esc" {
 					m.state = types.NormalState
@@ -411,6 +485,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
+		// Update elapsed time only
+		if m.isImageMode && m.isThinking {
+			m.elapsedTime = time.Since(m.startTime)
+			// Don't add fake progress, real progress should come from websocket
+		}
+
+	case types.ProgressMsg:
+		// This shouldn't be reached since we handle it in msgChan, but keep for safety
+		if m.isImageMode && m.isThinking && m.currentStreamID == msg.ID {
+			if msg.Update.Percent > 0 {
+				m.progressPct = msg.Update.Percent
+			}
+			if msg.Update.Value > 0 && msg.Update.Max > 0 {
+				m.nodeProgress = fmt.Sprintf("%d/%d", msg.Update.Value, msg.Update.Max)
+			}
+			// Don't set progressStage - we don't want to show "Executing node X" text
+			m.elapsedTime = msg.Update.ElapsedTime
+			cmds = append(cmds, m.updateViewportContent())
+		}
+
+	case types.QueueStatusMsg:
+		if msg.Err == nil {
+			m.queueCount = msg.Count
+			cmds = append(cmds, m.updateViewportContent())
+		}
+
 	case types.ConfigLoadedMsg:
 		if msg.Err == nil {
 			if msg.ModelName != "" {
@@ -418,6 +518,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if msg.URL != "" {
 				m.ollamaClient.BaseURL = msg.URL
+			}
+			if msg.ComfyUIURL != "" {
+				m.comfyUIClient.BaseURL = msg.ComfyUIURL
+			}
+			
+			// Load default workflow if in image mode and no workflow loaded yet
+			if m.isImageMode && len(m.comfyUIWorkflow) == 0 {
+				path := msg.WorkflowPath
+				// Expand ~ if present
+				if strings.HasPrefix(path, "~/") {
+					home, _ := os.UserHomeDir()
+					path = filepath.Join(home, path[2:])
+				}
+				
+				var err error
+				m.comfyUIWorkflow, err = os.ReadFile(path)
+				if err != nil {
+					// Just log error to console if we can't load default workflow
+					// In a real app we might want to show this in UI
+				}
 			}
 		}
 		// Fetch models after config is loaded and URL is set
@@ -575,6 +695,15 @@ func (m *Model) handleInsertState(msg tea.KeyMsg) tea.Cmd {
 		aiId := generateID(len(m.messages))
 		aiMsg := types.Message{ID: aiId, Role: "assistant", Content: "", IsCollapsed: false, Timestamp: time.Now()}
 		m.messages = append(m.messages, aiMsg)
+
+		if m.isImageMode {
+			m.isThinking = true
+			m.currentStreamID = aiId
+			cmds := []tea.Cmd{m.generateImage(aiId, m.input.Value()), m.updateViewportContent(), m.scrollToBottom(), m.spinner.Tick}
+			m.state = types.NormalState
+			m.input.Reset()
+			return tea.Batch(cmds...)
+		}
 
 		// Start streaming real-time response
 		m.streaming = true

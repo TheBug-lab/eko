@@ -13,14 +13,18 @@ import (
 const (
 	ConfigDir     = ".config/eko"
 	ConfigFile    = "config.json"
-	DefaultModel  = "dolphin-phi"
-	DefaultURL    = "http://localhost:11434"
+	DefaultModel      = "dolphin-phi"
+	DefaultURL        = "http://localhost:11434"
+	DefaultComfyUIURL = "http://localhost:8188"
+	DefaultWorkflowPath = "~/lab/model/workflow/default.json"
 )
 
 // Config represents the application configuration
 type Config struct {
-	Model string `json:"model"`
-	URL   string `json:"url"`
+	Model        string `json:"model"`
+	URL          string `json:"url"`
+	ComfyUIURL   string `json:"comfyui_url"`
+	WorkflowPath string `json:"workflow_path"`
 }
 
 // Manager handles configuration operations
@@ -79,7 +83,22 @@ func (m *Manager) LoadConfig() tea.Cmd {
 			}
 		}
 
-		return types.ConfigLoadedMsg{ModelName: config.Model, URL: config.URL, Err: nil}
+		// Use default ComfyUI URL if not specified
+		if config.ComfyUIURL == "" {
+			config.ComfyUIURL = DefaultComfyUIURL
+		} else {
+			// Add http:// protocol if missing
+			if !strings.HasPrefix(config.ComfyUIURL, "http://") && !strings.HasPrefix(config.ComfyUIURL, "https://") {
+				config.ComfyUIURL = "http://" + config.ComfyUIURL
+			}
+		}
+
+		// Use default workflow path if not specified
+		if config.WorkflowPath == "" {
+			config.WorkflowPath = DefaultWorkflowPath
+		}
+
+		return types.ConfigLoadedMsg{ModelName: config.Model, URL: config.URL, ComfyUIURL: config.ComfyUIURL, WorkflowPath: config.WorkflowPath, Err: nil}
 	}
 }
 

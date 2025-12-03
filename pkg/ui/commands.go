@@ -7,8 +7,17 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/thebug/lab/eko/v3/pkg/comfyui"
 	"github.com/thebug/lab/eko/v3/pkg/types"
 )
+
+func checkQueueStatus(baseURL string) tea.Cmd {
+	return func() tea.Msg {
+		client := comfyui.NewClient(baseURL)
+		count, err := client.GetQueueRemaining()
+		return types.QueueStatusMsg{Count: count, Err: err}
+	}
+}
 
 // initializeViewport initializes the viewport
 func (m Model) initializeViewport() tea.Cmd {
@@ -27,6 +36,12 @@ func (m Model) updateViewportContent() tea.Cmd {
 	viewMode := m.viewMode
 	streaming := m.streaming
 	spinner := m.spinner
+	progressPct := m.progressPct
+	progressStage := m.progressStage
+	nodeProgress := m.nodeProgress
+	elapsedTime := m.elapsedTime
+	isImageMode := m.isImageMode
+	isThinking := m.isThinking
 
 	return func() tea.Msg {
 		// Add safety check to prevent panics, but use defaults if needed
@@ -45,6 +60,12 @@ func (m Model) updateViewportContent() tea.Cmd {
 		tempModel.viewMode = viewMode
 		tempModel.streaming = streaming
 		tempModel.spinner = spinner
+		tempModel.progressPct = progressPct
+		tempModel.progressStage = progressStage
+		tempModel.nodeProgress = nodeProgress
+		tempModel.elapsedTime = elapsedTime
+		tempModel.isImageMode = isImageMode
+		tempModel.isThinking = isThinking
 
 		content := tempModel.renderMessages()
 		return types.ViewportContentMsg{Content: content}
@@ -253,4 +274,38 @@ func generateID(count int) string {
 	}
 
 	return string(rune('a'+first-1)) + string(rune('a'+second))
+}
+
+// generateImage generates an image using ComfyUI
+func (m Model) generateImage(id string, prompt string) tea.Cmd {
+	return func() tea.Msg {
+		// Buffer the channel to prevent dropping updates
+		progressChan := make(chan comfyui.ProgressUpdate, 100)
+		
+		// Start a goroutine to forward progress updates IMMEDIATELY
+		go func() {
+			for update := range progressChan {
+				m.msgChan <- types.ProgressMsg{ID: id, Update: update}
+			}
+		}()
+		
+		go func() {
+			m.msgChan <- types.GenerationStartMsg{ID: id}
+			
+			// Initial status
+			m.msgChan <- types.TokenMsg{ID: id, Token: "Generating image..."}
+
+			result, err := m.comfyUIClient.GenerateImage(m.comfyUIWorkflow, prompt, progressChan)
+			close(progressChan)
+			
+			if err != nil {
+				m.msgChan <- types.StreamErrorMsg{ID: id, Error: err.Error()}
+				return
+			}
+
+			m.msgChan <- types.TokenMsg{ID: id, Token: "\n\n" + result}
+			m.msgChan <- types.GenerationDoneMsg{ID: id}
+		}()
+		return nil
+	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -9,6 +10,9 @@ import (
 )
 
 func main() {
+	imageMode := flag.Bool("i", false, "Enable image generation mode")
+	flag.Parse()
+
 	// Add panic recovery
 	defer func() {
 		if r := recover(); r != nil {
@@ -17,7 +21,7 @@ func main() {
 		}
 	}()
 
-	p := tea.NewProgram(ui.NewModel(), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout))
+	p := tea.NewProgram(ui.NewModel(*imageMode, flag.Args()), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running program: %v", err)
 		os.Exit(1)

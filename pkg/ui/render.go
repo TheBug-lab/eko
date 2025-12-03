@@ -96,6 +96,39 @@ func (m Model) renderMainView() string {
 		)
 	}
 
+	// Add IMAGE tag if in image mode
+	if m.isImageMode {
+		// Create a 1-line tag: [ image ] to save height
+		bracketStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#fe3f01"))
+		textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#800000"))
+		
+		imageTag := fmt.Sprintf("%s%s%s", 
+			bracketStyle.Render("["),
+			textStyle.Render("image"),
+			bracketStyle.Render("]"),
+		)
+		
+		// Add queue count
+		queueText := fmt.Sprintf("%d ", m.queueCount)
+		queueStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render(queueText)
+		
+		fullTag := lipgloss.JoinHorizontal(lipgloss.Center, queueStyled, imageTag)
+		
+		// Let's go with a footer row.
+		return lipgloss.JoinVertical(
+			lipgloss.Top,
+			lipgloss.NewStyle().
+				Align(lipgloss.Center).
+				Width(m.width).
+				Height(m.height-1).
+				Render(content),
+			lipgloss.NewStyle().
+				Width(m.width).
+				Align(lipgloss.Right).
+				Render(fullTag),
+		)
+	}
+
 	// Center the entire content horizontally on the screen
 	return lipgloss.NewStyle().
 		Align(lipgloss.Center).
@@ -142,7 +175,61 @@ func (m Model) renderMessages() string {
 		// Show spinner if this is the last message and still processing
 		if msg.Role == "assistant" && len(m.messages) > 0 &&
 			msg.ID == m.messages[len(m.messages)-1].ID && m.isThinking {
-			if msg.Content == "" {
+			if m.isImageMode {
+				// Custom thin progress bar
+				barWidth := 30
+				
+				// Calculate percentages first
+				var displayPct float64 = m.progressPct // Default to total
+				
+				// Node progress - calculate percentage within current node
+				nodePctStr := ""
+				if m.nodeProgress != "" {
+					// Parse "5/9" format to calculate node percentage
+					var val, max int
+					if _, err := fmt.Sscanf(m.nodeProgress, "%d/%d", &val, &max); err == nil && max > 0 {
+						displayPct = float64(val) / float64(max)
+						nodePct := int(displayPct * 100)
+						nodePctStr = fmt.Sprintf("%d%% of %s", nodePct, m.nodeProgress)
+					}
+				}
+
+				filledWidth := int(displayPct * float64(barWidth))
+				if filledWidth > barWidth {
+					filledWidth = barWidth
+				}
+				emptyWidth := barWidth - filledWidth
+				
+				// Use thin characters
+				filledChar := "━"
+				emptyChar := "─"
+				
+				filled := strings.Repeat(filledChar, filledWidth)
+				empty := strings.Repeat(emptyChar, emptyWidth)
+				
+				// Color the filled part with orange
+				filledStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#fe3f01")).Render(filled)
+				emptyStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render(empty)
+				
+				// Percentage - show node% only
+				
+				// Time calculation: Elapsed / Total
+				elapsed := m.elapsedTime.Round(time.Second)
+				totalStr := "?"
+				
+				if m.progressPct > 0.01 {
+					totalEstimated := time.Duration(float64(m.elapsedTime) / m.progressPct).Round(time.Second)
+					totalStr = totalEstimated.String()
+				}
+				
+				timeStr := fmt.Sprintf(" | %s/%s", elapsed, totalStr)
+				
+				// Combine everything into one line
+				infoText := fmt.Sprintf("%s%s", nodePctStr, timeStr)
+				infoStyled := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render(infoText)
+				
+				content = fmt.Sprintf("%s%s\n%s", filledStyled, emptyStyled, infoStyled)
+			} else if msg.Content == "" {
 				content = m.spinner.View() + " AI is thinking..."
 			} else {
 				// Show spinner while content is being streamed
