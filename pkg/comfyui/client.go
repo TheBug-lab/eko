@@ -402,8 +402,26 @@ func (c *Client) downloadImage(filename, subfolder, imgType string) (string, err
 	}
 	
 	// Save to current directory
-	// Use the original filename
-	outFile, err := os.Create(filename)
+	// Generate new filename: eko-img-<timestamp>
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		ext = ".png"
+	}
+	
+	timestamp := time.Now().Format("20060102-150405")
+	newFilename := fmt.Sprintf("eko-img-%s%s", timestamp, ext)
+	
+	// Handle collision
+	counter := 1
+	for {
+		if _, err := os.Stat(newFilename); os.IsNotExist(err) {
+			break
+		}
+		newFilename = fmt.Sprintf("eko-img-%s-%d%s", timestamp, counter, ext)
+		counter++
+	}
+
+	outFile, err := os.Create(newFilename)
 	if err != nil {
 		return "", err
 	}
@@ -415,9 +433,9 @@ func (c *Client) downloadImage(filename, subfolder, imgType string) (string, err
 	}
 	
 	// Return absolute path for clarity
-	absPath, err := filepath.Abs(filename)
+	absPath, err := filepath.Abs(newFilename)
 	if err != nil {
-		return filename, nil
+		return newFilename, nil
 	}
 	return absPath, nil
 }

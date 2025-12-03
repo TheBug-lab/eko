@@ -24,7 +24,7 @@ type Config struct {
 	Model        string `json:"model"`
 	URL          string `json:"url"`
 	ComfyUIURL   string `json:"comfyui_url"`
-	WorkflowPath string `json:"workflow_path"`
+	WorkflowPath string `json:"img-workflow"`
 }
 
 // Manager handles configuration operations
